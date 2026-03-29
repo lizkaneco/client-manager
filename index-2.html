@@ -1,0 +1,924 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Account Directory</title>
+  <style>* { margin: 0; padding: 0; box-sizing: border-box; } body { background: #0f0d0a; }</style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+const { useState, useMemo, useEffect, useCallback } = React;
+
+const SUPABASE_URL = "https://eotvhspdotgwvotgwjrl.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVvdHZoc3Bkb3Rnd3ZvdGd3anJsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2MjIyMDcsImV4cCI6MjA5MDE5ODIwN30.BBFJcLQkodWjtGmTj1I7ZNWYhuQjErLgwc8X7DFDGZs";
+
+async function sbFetch(path, options = {}) {
+  const res = await fetch(SUPABASE_URL + path, {
+    ...options,
+    headers: {
+      "apikey": SUPABASE_KEY,
+      "Authorization": "Bearer " + SUPABASE_KEY,
+      "Content-Type": "application/json",
+      "Prefer": options.prefer || "",
+      ...(options.headers || {})
+    }
+  });
+  if (!res.ok) { const t = await res.text(); throw new Error(t); }
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+
+async function loadFromSupabase() {
+  try {
+    const rows = await sbFetch("/rest/v1/clients?select=*&order=original_id.asc.nullslast,created_at.asc");
+    return rows.map(r => ({
+      id: r.original_id || r.id,
+      supabase_id: r.id,
+      name: r.name || "",
+      city: r.city || "",
+      address: r.address || "",
+      phone: r.phone || "",
+      neighborhood: r.neighborhood || "",
+      status: r.status || "Customer",
+      notes: r.notes || "",
+      lastContact: r.last_contact || "",
+      contact: r.contact_person || "",
+      contacts: r.contacts || [],
+      appointments: r.appointments || [],
+    }));
+  } catch(e) {
+    console.error("Supabase load error:", e);
+    return null;
+  }
+}
+
+async function upsertToSupabase(client) {
+  try {
+    const payload = {
+      name: client.name,
+      city: client.city,
+      address: client.address,
+      phone: client.phone,
+      neighborhood: client.neighborhood,
+      status: client.status,
+      notes: client.notes || "",
+      last_contact: client.lastContact || "",
+      contact_person: client.contact || "",
+      contacts: client.contacts || [],
+      appointments: client.appointments || [],
+    };
+    if (client.supabase_id) {
+      await sbFetch("/rest/v1/clients?id=eq." + client.supabase_id, {
+        method: "PATCH",
+        prefer: "return=minimal",
+        body: JSON.stringify(payload)
+      });
+    } else if (typeof client.id === "number" && client.id < 100000) {
+      await sbFetch("/rest/v1/clients?original_id=eq." + client.id, {
+        method: "PATCH",
+        prefer: "return=minimal",
+        body: JSON.stringify(payload)
+      });
+    }
+  } catch(e) {
+    console.error("Supabase upsert error:", e);
+  }
+}
+
+async function insertClientToSupabase(client) {
+  try {
+    const payload = {
+      original_id: null,
+      name: client.name,
+      city: client.city,
+      address: client.address,
+      phone: client.phone,
+      neighborhood: client.neighborhood,
+      status: client.status,
+      notes: client.notes,
+      last_contact: client.lastContact,
+      contact_person: client.contact || "",
+      contacts: client.contacts || [],
+      appointments: client.appointments || [],
+    };
+    const rows = await sbFetch("/rest/v1/clients", {
+      method: "POST",
+      prefer: "return=representation",
+      body: JSON.stringify(payload)
+    });
+    return rows?.[0];
+  } catch(e) {
+    console.error("Supabase insert error:", e);
+    return null;
+  }
+}
+
+const RAW_CLIENTS = [
+  { id: 1, name: "388 ITALIAN RESTAURANT BY MR SAL", city: "Boca Raton", address: "3360 N Federal Hwy", phone: "561-794-3888", neighborhood: "East Boca", status: "Customer", notes: "", lastContact: "" },
+  { id: 2, name: "4 S LIQUORS", city: "Boca Raton", address: "4161 N Federal Hwy", phone: "561-395-7979", neighborhood: "East Boca", status: "Customer", notes: "", lastContact: "" },
+  { id: 3, name: "ARMANDO FINE DINING RESTAURANT", city: "Boca Raton", address: "230 S Federal Hwy", phone: "", neighborhood: "Downtown Boca", status: "Customer", notes: "", lastContact: "" },
+  { id: 4, name: "ARTUROS TRATTORIA ROMANA", city: "Boca Raton", address: "6750 N Federal Hwy", phone: "561-997-7373", neighborhood: "North Boca", status: "Customer", notes: "", lastContact: "" },
+  { id: 5, name: "BOCA RATON MARRIOTT AT BOCA CENTER", city: "Boca Raton", address: "5150 Town Center Cir", phone: "561-392-4600", neighborhood: "Boca Center", status: "Customer", notes: "", lastContact: "" },
+  { id: 6, name: "BOMBAY CAFE", city: "Boca Raton", address: "1200 Yamato Rd", phone: "561-395-1313", neighborhood: "Yamato Corridor", status: "Customer", notes: "", lastContact: "" },
+  { id: 7, name: "GOURMET MARKET FRENCH SPECIALTIES", city: "Boca Raton", address: "1658 N Federal Hwy", phone: "", neighborhood: "East Boca", status: "Customer", notes: "", lastContact: "" },
+  { id: 8, name: "IL MULINO NEW YORK", city: "Boca Raton", address: "451 E Palmetto Park Rd", phone: "561-338-8606", neighborhood: "Downtown Boca", status: "Customer", notes: "", lastContact: "" },
+  { id: 9, name: "LE SORELLE", city: "Boca Raton", address: "5872 N Federal Hwy", phone: "561-620-7788", neighborhood: "North Boca", status: "Customer", notes: "", lastContact: "" },
+  { id: 10, name: "MARIOS MARKET", city: "Boca Raton", address: "7177 N Federal Hwy", phone: "561-997-9463", neighborhood: "North Boca", status: "Customer", notes: "", lastContact: "" },
+  { id: 11, name: "MATTEO'S RESTAURANT", city: "Boca Raton", address: "233 S Federal Hwy", phone: "561-392-0773", neighborhood: "Downtown Boca", status: "Customer", notes: "", lastContact: "" },
+  { id: 12, name: "MEDITERRANEAN KEBOB HOUSE", city: "Boca Raton", address: "3400 N Federal Hwy", phone: "", neighborhood: "East Boca", status: "Customer", notes: "", lastContact: "" },
+  { id: 13, name: "MIA ROSEBUD", city: "Boca Raton", address: "150 E Palmetto Park Rd", phone: "", neighborhood: "Downtown Boca", status: "Customer", notes: "", lastContact: "" },
+  { id: 14, name: "PATSY PIZZERIA", city: "Boca Raton", address: "319 NE 2nd Ave", phone: "", neighborhood: "Downtown Boca", status: "Customer", notes: "", lastContact: "" },
+  { id: 15, name: "PIZZA AL FRESCO", city: "Boca Raton", address: "10 E Palmetto Park Rd", phone: "561-347-7373", neighborhood: "Downtown Boca", status: "Customer", notes: "", lastContact: "" },
+  { id: 16, name: "RENZOS CAFE PIZZERIA", city: "Boca Raton", address: "299 SE Mizner Blvd", phone: "561-367-3555", neighborhood: "Mizner Park", status: "Customer", notes: "", lastContact: "" },
+  { id: 17, name: "RINOS RISTORANTE", city: "Boca Raton", address: "6877 SW 18th St", phone: "561-392-0493", neighborhood: "West Boca", status: "Customer", notes: "", lastContact: "" },
+  { id: 18, name: "TRATTORIA NONNA", city: "Boca Raton", address: "6006 SW 18th St", phone: "", neighborhood: "West Boca", status: "Customer", notes: "", lastContact: "" },
+  { id: 19, name: "TUCCIS FIRE N COAL", city: "Boca Raton", address: "341 E Yamato Rd", phone: "561-620-2930", neighborhood: "Yamato Corridor", status: "Customer", notes: "", lastContact: "" },
+  { id: 20, name: "DELUCA'S CHOPHOUSE", city: "Boca Raton", address: "499 South Federal Highway", phone: "561-325-8000", neighborhood: "Downtown Boca", status: "Customer", notes: "", lastContact: "" },
+  { id: 21, name: "LE SORELLE DOWNTOWN", city: "Boca Raton", address: "507 SE Mizner Blvd", phone: "561-430-5110", neighborhood: "Downtown Boca", status: "Customer", notes: "", lastContact: "" },
+  { id: 22, name: "POLO CLUB BOCA RATON", city: "Boca Raton", address: "5400 Champion Blvd", phone: "561-995-1200", neighborhood: "Polo Club", status: "Customer", notes: "", lastContact: "" },
+  { id: 23, name: "POSITANO", city: "Boca Raton", address: "4400 N Federal Hwy", phone: "561-368-8116", neighborhood: "East Boca", status: "Customer", notes: "", lastContact: "" },
+  { id: 24, name: "SIENA GRILL", city: "Boca Raton", address: "9101 Lakeridge Blvd", phone: "561-923-9966", neighborhood: "Yamato Corridor", status: "Customer", notes: "", lastContact: "" },
+  { id: 25, name: "U S CIGAR EXCHANGE INC", city: "Boca Raton", address: "701 S Federal Hwy", phone: "561-395-0111", neighborhood: "Downtown Boca", status: "Customer", notes: "", lastContact: "" },
+  { id: 26, name: "Casa D'Angelo", city: "Boca Raton", address: "171 E Palmetto Park Rd", phone: "561-996-1234", neighborhood: "Downtown Boca", status: "Prospect", notes: "", lastContact: "" },
+  { id: 27, name: "Trattoria Romana", city: "Boca Raton", address: "499 E Palmetto Park Rd", phone: "561-395-2583", neighborhood: "Downtown Boca", status: "Prospect", notes: "", lastContact: "" },
+  { id: 28, name: "Abe & Louie's", city: "Boca Raton", address: "2200 Glades Rd", phone: "561-447-0024", neighborhood: "Glades Corridor", status: "Prospect", notes: "", lastContact: "" },
+  { id: 29, name: "BOYNTON WINE & SPIRITS", city: "Boynton Beach", address: "1313 W Boynton Beach Blvd", phone: "561-732-6000", neighborhood: "Boynton Beach Blvd", status: "Customer", notes: "", lastContact: "" },
+  { id: 30, name: "DELUCAS ITALIAN KITCHEN & BAR", city: "Boynton Beach", address: "8260 S Jog Rd", phone: "561-738-8001", neighborhood: "West Boynton", status: "Customer", notes: "", lastContact: "" },
+  { id: 31, name: "NICHOLSON MUIR MEATS", city: "Boynton Beach", address: "12550 S Military Trl", phone: "561-733-7001", neighborhood: "Boynton Commerce", status: "Customer", notes: "", lastContact: "" },
+  { id: 32, name: "NY PIZZA DEPT II", city: "Boynton Beach", address: "8794 W Boynton Beach Blvd", phone: "561-734-1600", neighborhood: "West Boynton", status: "Customer", notes: "", lastContact: "" },
+  { id: 33, name: "RUOCCOS RESTAURANT", city: "Boynton Beach", address: "1600 S Federal Hwy", phone: "561-364-9601", neighborhood: "Federal Hwy", status: "Customer", notes: "", lastContact: "" },
+  { id: 34, name: "DELILAH", city: "Brickell", address: "301 Brickell Key Dr", phone: "", neighborhood: "Brickell", status: "Customer", notes: "", lastContact: "" },
+  { id: 35, name: "CHEVRE – THE WORLD'S FINEST CHEESE HOUSE", city: "Coral Gables", address: "154 Giralda Ave", phone: "305-448-4242", neighborhood: "Downtown Coral Gables", status: "Customer", notes: "", lastContact: "" },
+  { id: 36, name: "TULLIO RISTORANTE ITALIANO", city: "Coral Gables", address: "160 Andalusia Ave", phone: "305-665-9881", neighborhood: "Downtown Coral Gables", status: "Customer", notes: "", lastContact: "" },
+  { id: 37, name: "SCUOLA VECCHIA PIZZA E VINO INC", city: "Fort Lauderdale", address: "721 N Federal Hwy", phone: "954-565-3636", neighborhood: "Coral Ridge", status: "Customer", notes: "", lastContact: "" },
+  { id: 38, name: "CORAL SPRINGS LIQUOR STORE", city: "Coral Springs", address: "10367 Royal Palm Blvd", phone: "954-752-8880", neighborhood: "Royal Palm Blvd", status: "Customer", notes: "", lastContact: "" },
+  { id: 39, name: "PRIMO LIQUORS DAVIE", city: "Davie", address: "2277 S University Dr", phone: "954-472-9463", neighborhood: "University Dr", status: "Customer", notes: "", lastContact: "" },
+  { id: 40, name: "DOLCE VITA TRATTORIA", city: "Deerfield Beach", address: "1910 NE 5th Ave", phone: "954-571-7800", neighborhood: "The Cove", status: "Customer", notes: "", lastContact: "" },
+  { id: 41, name: "LUIGI DI ROMA", city: "Deerfield Beach", address: "701 SE 15th Ave", phone: "954-427-5151", neighborhood: "Hillsboro Blvd", status: "Customer", notes: "", lastContact: "" },
+  { id: 42, name: "OCEAN 234", city: "Deerfield Beach", address: "234 N Ocean Dr", phone: "954-428-2539", neighborhood: "Deerfield Beach Pier", status: "Customer", notes: "", lastContact: "" },
+  { id: 43, name: "PATIO", city: "Deerfield Beach", address: "217 E Hillsboro Blvd", phone: "", neighborhood: "Hillsboro Blvd", status: "Customer", notes: "", lastContact: "" },
+  { id: 44, name: "PIZZA RUSTICA DELRAY", city: "Delray Beach", address: "1155 E Atlantic Ave", phone: "561-278-3366", neighborhood: "Atlantic Ave", status: "Customer", notes: "", lastContact: "" },
+  { id: 45, name: "AVALON", city: "Delray Beach", address: "110 E Atlantic Ave", phone: "561-265-0400", neighborhood: "Atlantic Ave", status: "Customer", notes: "", lastContact: "" },
+  { id: 46, name: "BOYS FARMERS MARKET INC (THE)", city: "Delray Beach", address: "14378 S Military Trl", phone: "561-496-0810", neighborhood: "West Delray", status: "Customer", notes: "", lastContact: "" },
+  { id: 47, name: "CAMPI", city: "Delray Beach", address: "233 NE 2nd Ave", phone: "561-576-6777", neighborhood: "Pineapple Grove", status: "Customer", notes: "", lastContact: "" },
+  { id: 48, name: "CASA LACQUA RISTORANTE ITALIANO", city: "Delray Beach", address: "9 SE 2nd Ave", phone: "561-563-7492", neighborhood: "Atlantic Ave", status: "Customer", notes: "", lastContact: "" },
+  { id: 49, name: "CHINA GARDENS RESTAURANT", city: "Delray Beach", address: "420 E Atlantic Ave", phone: "561-276-8181", neighborhood: "Atlantic Ave", status: "Customer", notes: "", lastContact: "" },
+  { id: 50, name: "DADA", city: "Delray Beach", address: "52 N Swinton Ave", phone: "561-330-3232", neighborhood: "Downtown Delray", status: "Customer", notes: "", lastContact: "" },
+  { id: 51, name: "DELRAY BEACH CLUB", city: "Delray Beach", address: "2001 S Ocean Blvd", phone: "561-243-2100", neighborhood: "Ocean Blvd", status: "Customer", notes: "", lastContact: "" },
+  { id: 52, name: "DELRAY LIQUOR", city: "Delray Beach", address: "1500 S Federal Hwy", phone: "561-278-0505", neighborhood: "Federal Hwy", status: "Customer", notes: "", lastContact: "" },
+  { id: 53, name: "LA CIGALE A TASTE OF THE MEDITERRANEAN", city: "Delray Beach", address: "253 SE 5th Ave", phone: "561-265-0600", neighborhood: "Downtown Delray", status: "Customer", notes: "", lastContact: "" },
+  { id: 54, name: "LE SORELLE DELRAY", city: "Delray Beach", address: "11 SE 2nd Ave", phone: "561-562-7333", neighborhood: "Atlantic Ave", status: "Customer", notes: "", lastContact: "" },
+  { id: 55, name: "RAY HOTEL DELRAY BEACH", city: "Delray Beach", address: "233 NE 2nd Ave", phone: "561-739-1700", neighborhood: "Pineapple Grove", status: "Customer", notes: "", lastContact: "" },
+  { id: 56, name: "TASOS GREEK TAVERNA", city: "Delray Beach", address: "170 N Ocean Blvd", phone: "561-270-2732", neighborhood: "Beach District", status: "Customer", notes: "", lastContact: "" },
+  { id: 57, name: "THE WINE WAVE", city: "Delray Beach", address: "900 E Atlantic Ave", phone: "561-276-7222", neighborhood: "Atlantic Ave", status: "Customer", notes: "", lastContact: "" },
+  { id: 58, name: "TRAMONTI", city: "Delray Beach", address: "44 SE 1st Ave", phone: "561-272-1944", neighborhood: "Downtown Delray", status: "Customer", notes: "", lastContact: "" },
+  { id: 59, name: "VIC & ANGELO'S", city: "Delray Beach", address: "290 E Atlantic Ave", phone: "561-278-9570", neighborhood: "Atlantic Ave", status: "Customer", notes: "", lastContact: "" },
+  { id: 60, name: "Le Colonial", city: "Delray Beach", address: "601 E Atlantic Ave", phone: "561-566-1800", neighborhood: "Atlantic Ave", status: "Prospect", notes: "", lastContact: "" },
+  { id: 61, name: "Lionfish", city: "Delray Beach", address: "307 E Atlantic Ave", phone: "561-639-8700", neighborhood: "Atlantic Ave", status: "Prospect", notes: "", lastContact: "" },
+  { id: 62, name: "Joseph's Wine Bar", city: "Delray Beach", address: "33 SE 3rd Ave", phone: "561-272-6100", neighborhood: "Atlantic Ave", status: "Prospect", notes: "", lastContact: "" },
+  { id: 63, name: "BASILICO RISTAURANTE AT DORAL", city: "Doral", address: "11402 NW 41st St", phone: "305-591-7107", neighborhood: "Doral", status: "Customer", notes: "", lastContact: "" },
+  { id: 64, name: "ANTHONY'S RUNWAY 84", city: "Fort Lauderdale", address: "330 W State Rd 84", phone: "954-467-8484", neighborhood: "Marina Mile", status: "Customer", notes: "", lastContact: "" },
+  { id: 65, name: "ANTHONYS CLAM HOUSE AND GRILL", city: "Fort Lauderdale", address: "2860 E Commercial Blvd", phone: "954-772-3631", neighborhood: "Lauderdale By The Sea", status: "Customer", notes: "", lastContact: "" },
+  { id: 66, name: "CAFE MARTORANO", city: "Fort Lauderdale", address: "3343 E Oakland Park Blvd", phone: "954-561-2554", neighborhood: "Oakland Park Blvd", status: "Customer", notes: "", lastContact: "" },
+  { id: 67, name: "CAFE VICO", city: "Fort Lauderdale", address: "1125 N Federal Hwy", phone: "954-525-7400", neighborhood: "Victoria Park", status: "Customer", notes: "", lastContact: "" },
+  { id: 68, name: "CASA D'ANGELO", city: "Fort Lauderdale", address: "1201 N Federal Hwy", phone: "954-564-1234", neighborhood: "Victoria Park", status: "Customer", notes: "", lastContact: "" },
+  { id: 69, name: "DANIELS A FLORIDA STEAKHOUSE", city: "Fort Lauderdale", address: "620 S Federal Hwy", phone: "954-467-5900", neighborhood: "Downtown FTL", status: "Customer", notes: "", lastContact: "" },
+  { id: 70, name: "DE SANTIS SELECTIONS", city: "Fort Lauderdale", address: "1101 N Federal Hwy", phone: "", neighborhood: "Flagler Village", status: "Customer", notes: "", lastContact: "" },
+  { id: 71, name: "FOUR SEASONS HOTEL FORT LAUDERDALE", city: "Fort Lauderdale", address: "525 N Fort Lauderdale Beach Blvd", phone: "754-336-3100", neighborhood: "Fort Lauderdale Beach", status: "Customer", notes: "", lastContact: "" },
+  { id: 72, name: "GRAN FORNO ON LAS OLAS", city: "Fort Lauderdale", address: "1235 E Las Olas Blvd", phone: "954-533-9000", neighborhood: "Las Olas", status: "Customer", notes: "", lastContact: "" },
+  { id: 73, name: "GUY'S WINE'S", city: "Fort Lauderdale", address: "1515 SE 17th St", phone: "954-522-4700", neighborhood: "17th Street Causeway", status: "Customer", notes: "", lastContact: "" },
+  { id: 74, name: "OCEAN MANOR RESORT-CASA CALABRIA", city: "Fort Lauderdale", address: "4040 Galt Ocean Dr", phone: "954-565-4000", neighborhood: "Galt Ocean Mile", status: "Customer", notes: "", lastContact: "" },
+  { id: 75, name: "PIER 66 HOTEL AND MARINA", city: "Fort Lauderdale", address: "2301 SE 17th St", phone: "954-525-6666", neighborhood: "17th Street Causeway", status: "Customer", notes: "", lastContact: "" },
+  { id: 76, name: "PRIMO LIQUORS -FEDERAL HWY", city: "Fort Lauderdale", address: "901 N Federal Hwy", phone: "954-763-1818", neighborhood: "Federal Hwy", status: "Customer", notes: "", lastContact: "" },
+  { id: 77, name: "CAFFE EUROPA", city: "Fort Lauderdale", address: "910 E Las Olas Blvd", phone: "954-467-6530", neighborhood: "Las Olas", status: "Customer", notes: "", lastContact: "" },
+  { id: 78, name: "ULTIMATE CIGARS AND FINE WINES", city: "Fort Lauderdale", address: "204 SW 2nd St", phone: "954-533-7556", neighborhood: "Downtown FTL", status: "Customer", notes: "", lastContact: "" },
+  { id: 79, name: "VINOS ON LAS OLAS", city: "Fort Lauderdale", address: "922 E Las Olas Blvd", phone: "954-990-7321", neighborhood: "Las Olas", status: "Customer", notes: "", lastContact: "" },
+  { id: 80, name: "Louie Bossi's", city: "Fort Lauderdale", address: "1032 E Las Olas Blvd", phone: "954-356-6699", neighborhood: "Las Olas", status: "Prospect", notes: "", lastContact: "" },
+  { id: 81, name: "Wild Sea Oyster Bar", city: "Fort Lauderdale", address: "620 E Las Olas Blvd", phone: "954-525-2421", neighborhood: "Las Olas", status: "Prospect", notes: "", lastContact: "" },
+  { id: 82, name: "The Katherine", city: "Fort Lauderdale", address: "723 E Broward Blvd", phone: "954-463-0040", neighborhood: "Downtown FTL", status: "Prospect", notes: "", lastContact: "" },
+  { id: 83, name: "GROVE PIZZA CUCINA & WINE BAR", city: "Hobe Sound", address: "8833 SE Bridge Rd", phone: "772-546-5400", neighborhood: "Hobe Sound", status: "Customer", notes: "", lastContact: "" },
+  { id: 84, name: "CAFFE ANDIAMO", city: "Jacksonville", address: "104 Bartram Oaks Walk Suite 101", phone: "904-230-9990", neighborhood: "Bartram Park", status: "Customer", notes: "", lastContact: "" },
+  { id: 85, name: "BUONASERA RESTAURANT", city: "Jupiter", address: "250 S US Hwy 1", phone: "561-747-4445", neighborhood: "Harbourside Area", status: "Customer", notes: "", lastContact: "" },
+  { id: 86, name: "PORTOFINO BISTRO MEDITERRANEO", city: "Jupiter", address: "201 US Hwy 1 Suite D10", phone: "561-406-6587", neighborhood: "Harbourside Area", status: "Customer", notes: "", lastContact: "" },
+  { id: 87, name: "REMBAR PBC LLC", city: "Jupiter", address: "223 US Hwy 1", phone: "561-532-7888", neighborhood: "Harbourside Area", status: "Customer", notes: "", lastContact: "" },
+  { id: 88, name: "AMERICAN GERMAN CLUB", city: "Lake Worth", address: "5111 Lantana Rd", phone: "561-967-6464", neighborhood: "Lantana Rd", status: "Customer", notes: "", lastContact: "" },
+  { id: 89, name: "OCEANO", city: "Lake Worth", address: "829 Lake Ave", phone: "561-588-8889", neighborhood: "Downtown Lake Worth", status: "Customer", notes: "", lastContact: "" },
+  { id: 90, name: "PARADISO RESTAURANT", city: "Lake Worth", address: "625 Lake Ave", phone: "561-547-0050", neighborhood: "Downtown Lake Worth", status: "Customer", notes: "", lastContact: "" },
+  { id: 91, name: "ROLLATINI ITALIAN RESTAURANT", city: "Lake Worth", address: "6600 S Dixie Hwy", phone: "561-585-3128", neighborhood: "Dixie Hwy", status: "Customer", notes: "", lastContact: "" },
+  { id: 92, name: "RUSTICO ITALIANO", city: "Lake Worth", address: "510 Lucerne Ave", phone: "561-547-2782", neighborhood: "Downtown Lake Worth", status: "Customer", notes: "", lastContact: "" },
+  { id: 93, name: "HIVE WATERFRONT RESTAURANT", city: "Lantana", address: "6246 S Dixie Hwy", phone: "561-440-3313", neighborhood: "Intracoastal Area", status: "Customer", notes: "", lastContact: "" },
+  { id: 94, name: "BLUE MOON FISH COMPANY", city: "Lauderdale By The Sea", address: "4405 W Tradewinds Ave", phone: "954-267-9888", neighborhood: "Lauderdale Beach", status: "Customer", notes: "", lastContact: "" },
+  { id: 95, name: "CIAO AMMORE MOZZARELLA MARKET", city: "Lauderdale By The Sea", address: "4433 N Ocean Dr", phone: "954-900-3715", neighborhood: "Lauderdale Beach", status: "Customer", notes: "", lastContact: "" },
+  { id: 96, name: "CASA TUA", city: "Miami", address: "1700 James Ave", phone: "305-673-1010", neighborhood: "South Beach", status: "Customer", notes: "", lastContact: "" },
+  { id: 97, name: "DOUBLETREE GRAND HOTEL/PRIMOS", city: "Miami", address: "1717 N Bayshore Dr", phone: "305-372-0313", neighborhood: "Edgewater", status: "Customer", notes: "", lastContact: "" },
+  { id: 98, name: "GISELLE", city: "Miami", address: "15 NE 11th St", phone: "305-358-9848", neighborhood: "Downtown Miami", status: "Customer", notes: "", lastContact: "" },
+  { id: 99, name: "IL GABBIANO", city: "Miami", address: "335 S Biscayne Blvd", phone: "305-373-0063", neighborhood: "Brickell Waterfront", status: "Customer", notes: "", lastContact: "" },
+  { id: 100, name: "LA GORCE COUNTRY CLUB", city: "Miami Beach", address: "5685 Alton Rd", phone: "305-866-4421", neighborhood: "La Gorce", status: "Customer", notes: "", lastContact: "" },
+  { id: 101, name: "VERO ITALIAN", city: "Miami", address: "90 SE 1st St", phone: "305-374-0009", neighborhood: "Downtown Miami", status: "Customer", notes: "", lastContact: "" },
+  { id: 102, name: "SEASPICE", city: "Miami", address: "422 NW N River Dr", phone: "305-440-4200", neighborhood: "Miami River", status: "Customer", notes: "", lastContact: "" },
+  { id: 103, name: "THE RIVER OYSTER BAR", city: "Miami", address: "33 SE 7th St", phone: "305-530-1915", neighborhood: "Brickell", status: "Customer", notes: "", lastContact: "" },
+  { id: 104, name: "BLUE PROVENCE", city: "Naples", address: "1234 8th St S", phone: "239-261-8239", neighborhood: "Old Naples", status: "Customer", notes: "", lastContact: "" },
+  { id: 105, name: "FLAME LIQUORS", city: "North Palm Beach", address: "1201 US Hwy 1", phone: "561-842-6999", neighborhood: "US1 Corridor", status: "Customer", notes: "", lastContact: "" },
+  { id: 106, name: "DAL CONTADINO TRATTORIA", city: "Oakland Park", address: "3031 N Federal Hwy", phone: "954-565-9333", neighborhood: "Oakland Park Blvd", status: "Customer", notes: "", lastContact: "" },
+  { id: 107, name: "LA GOULUE", city: "Palm Beach", address: "288 S County Rd", phone: "561-655-9292", neighborhood: "Palm Beach Island", status: "Customer", notes: "", lastContact: "" },
+  { id: 108, name: "LA SIRENA", city: "Palm Beach", address: "6316 S Dixie Hwy", phone: "561-585-3128", neighborhood: "Dixie Hwy", status: "Customer", notes: "", lastContact: "" },
+  { id: 109, name: "LE BAR A VIN", city: "Palm Beach", address: "380 S County Rd", phone: "561-721-2526", neighborhood: "Palm Beach Island", status: "Customer", notes: "", lastContact: "" },
+  { id: 110, name: "ACQUA CAFE", city: "Palm Beach", address: "150 Worth Ave", phone: "561-832-9920", neighborhood: "Worth Ave", status: "Customer", notes: "", lastContact: "" },
+  { id: 111, name: "AL FRESCO RESTAURANT AND BAR", city: "Palm Beach", address: "2345 S Ocean Blvd", phone: "561-273-4130", neighborhood: "South Ocean Blvd", status: "Customer", notes: "", lastContact: "" },
+  { id: 112, name: "BICE PALM BEACH", city: "Palm Beach", address: "313 Worth Ave", phone: "561-835-1600", neighborhood: "Worth Ave", status: "Customer", notes: "", lastContact: "" },
+  { id: 113, name: "BREAKERS HOTEL", city: "Palm Beach", address: "1 S County Rd", phone: "561-655-6611", neighborhood: "Palm Beach Island", status: "Customer", notes: "", lastContact: "" },
+  { id: 114, name: "CAFE BOULUD", city: "Palm Beach", address: "301 Australian Ave", phone: "561-655-6060", neighborhood: "Palm Beach Island", status: "Customer", notes: "", lastContact: "" },
+  { id: 115, name: "CAFE L'EUROPE", city: "Palm Beach", address: "331 S County Rd", phone: "561-655-4020", neighborhood: "Palm Beach Island", status: "Customer", notes: "", lastContact: "" },
+  { id: 116, name: "CHURCHILL CIGAR COMPANY LLC", city: "Palm Beach", address: "130 Worth Ave", phone: "561-659-5808", neighborhood: "Worth Ave", status: "Customer", notes: "", lastContact: "" },
+  { id: 117, name: "FRENCH WINE MERCHANT THE", city: "Palm Beach", address: "150 Worth Ave Suite 118", phone: "561-729-5888", neighborhood: "Worth Ave", status: "Customer", notes: "", lastContact: "" },
+  { id: 118, name: "HAMPTONS PALM BEACH", city: "Palm Beach", address: "340 Royal Poinciana Way", phone: "561-557-5800", neighborhood: "Royal Poinciana Plaza", status: "Customer", notes: "", lastContact: "" },
+  { id: 119, name: "MAR A LAGO CLUB (THE)", city: "Palm Beach", address: "1100 S Ocean Blvd", phone: "561-832-2600", neighborhood: "South Ocean Blvd", status: "Customer", notes: "", lastContact: "" },
+  { id: 120, name: "MONACO HOME INTERIORS LLC", city: "Palm Beach", address: "332 Worth Ave", phone: "561-655-8553", neighborhood: "Worth Ave", status: "Customer", notes: "", lastContact: "" },
+  { id: 121, name: "PINK STEAK", city: "Palm Beach", address: "2777 S Dixie Hwy", phone: "561-623-1118", neighborhood: "Dixie Hwy", status: "Customer", notes: "", lastContact: "" },
+  { id: 122, name: "RISTORANTE SANTUCCI", city: "Palm Beach", address: "610 Clematis St", phone: "561-721-8788", neighborhood: "Downtown WPB", status: "Customer", notes: "", lastContact: "" },
+  { id: 123, name: "SAILFISH CLUB OF FLORIDA", city: "Palm Beach", address: "1338 N Lake Way", phone: "561-844-0206", neighborhood: "Palm Beach Island", status: "Customer", notes: "", lastContact: "" },
+  { id: 124, name: "TABLE 26", city: "Palm Beach", address: "1700 S Dixie Hwy", phone: "561-855-2660", neighborhood: "Dixie Corridor", status: "Customer", notes: "", lastContact: "" },
+  { id: 125, name: "TIDELINE PALM BEACH OCEAN RESORT", city: "Palm Beach", address: "2842 S Ocean Blvd", phone: "561-540-6440", neighborhood: "South Ocean Blvd", status: "Customer", notes: "", lastContact: "" },
+  { id: 126, name: "TREVINI RISTORANTE", city: "Palm Beach", address: "235 Sunrise Ave", phone: "561-659-3888", neighborhood: "Palm Beach Island", status: "Customer", notes: "", lastContact: "" },
+  { id: 127, name: "VENEZIA PIZZA AND RESTAURANT", city: "Palm Beach", address: "715 Belvedere Rd", phone: "561-833-2111", neighborhood: "Belvedere Rd", status: "Customer", notes: "", lastContact: "" },
+  { id: 128, name: "VIRGINIA PHILIP WINE SPIRITS & ACADEMY", city: "Palm Beach", address: "101 N County Rd", phone: "561-721-6000", neighborhood: "Palm Beach Island", status: "Customer", notes: "", lastContact: "" },
+  { id: 129, name: "Buccan", city: "Palm Beach", address: "350 S County Rd", phone: "561-833-3450", neighborhood: "Palm Beach Island", status: "Prospect", notes: "", lastContact: "" },
+  { id: 130, name: "Cafe Boulud (Prospect)", city: "Palm Beach", address: "301 Australian Ave", phone: "561-655-6060", neighborhood: "Palm Beach Island", status: "Prospect", notes: "", lastContact: "" },
+  { id: 131, name: "Renato's", city: "Palm Beach", address: "87 Via Mizner", phone: "561-655-9752", neighborhood: "Palm Beach Island", status: "Prospect", notes: "", lastContact: "" },
+  { id: 132, name: "Flagler Steakhouse", city: "Palm Beach", address: "1 S County Rd", phone: "561-659-8471", neighborhood: "Palm Beach Island", status: "Prospect", notes: "", lastContact: "" },
+  { id: 133, name: "Vineta Hotel – Coco's", city: "Palm Beach", address: "363 Cocoanut Row", phone: "", neighborhood: "Palm Beach Island", status: "Prospect", notes: "", lastContact: "" },
+  { id: 134, name: "Vineta Hotel – Pool House", city: "Palm Beach", address: "363 Cocoanut Row", phone: "", neighborhood: "Palm Beach Island", status: "Prospect", notes: "", lastContact: "" },
+  { id: 135, name: "Vineta Hotel – Vineta Bar", city: "Palm Beach", address: "363 Cocoanut Row", phone: "", neighborhood: "Palm Beach Island", status: "Prospect", notes: "", lastContact: "" },
+  { id: 136, name: "MALBEC GRILL", city: "Parkland", address: "7715 N State Rd 7", phone: "954-345-9090", neighborhood: "State Road 7", status: "Customer", notes: "", lastContact: "" },
+  { id: 137, name: "A1A FINE WINE & SPIRITS OF PGA", city: "PGA / Palm Beach Gardens", address: "5410 PGA Blvd", phone: "561-627-9463", neighborhood: "PGA Blvd", status: "Customer", notes: "", lastContact: "" },
+  { id: 138, name: "BAREFOOT WINE & SPIRITS", city: "PGA / Palm Beach Gardens", address: "4802 PGA Blvd", phone: "561-627-2000", neighborhood: "PGA Blvd", status: "Customer", notes: "", lastContact: "" },
+  { id: 139, name: "CARMINE'S GOURMET MARKET", city: "PGA / Palm Beach Gardens", address: "2401 PGA Blvd", phone: "561-776-6066", neighborhood: "PGA Blvd", status: "Customer", notes: "", lastContact: "" },
+  { id: 140, name: "LA MASSERIA", city: "PGA / Palm Beach Gardens", address: "5520 PGA Blvd", phone: "561-660-8272", neighborhood: "PGA Blvd", status: "Customer", notes: "", lastContact: "" },
+  { id: 141, name: "THE VINE POST", city: "PGA / Palm Beach Gardens", address: "6620 PGA Blvd", phone: "561-328-8463", neighborhood: "PGA Blvd", status: "Customer", notes: "", lastContact: "" },
+  { id: 142, name: "MIRAGGIO", city: "Pompano Beach", address: "2221 E Atlantic Blvd", phone: "954-946-8100", neighborhood: "Atlantic Blvd", status: "Customer", notes: "", lastContact: "" },
+  { id: 143, name: "BELLE MONTE ITALIAN DELICATESSEN", city: "Pompano Beach", address: "2436 N Federal Hwy", phone: "954-781-9580", neighborhood: "Federal Hwy", status: "Customer", notes: "", lastContact: "" },
+  { id: 144, name: "CHEF DEES", city: "Pompano Beach", address: "230 S Cypress Rd", phone: "954-943-4223", neighborhood: "Old Town Pompano", status: "Customer", notes: "", lastContact: "" },
+  { id: 145, name: "DARRELL & OLIVERS CAFE MAXX", city: "Pompano Beach", address: "2601 E Atlantic Blvd", phone: "954-782-0606", neighborhood: "Atlantic Blvd", status: "Customer", notes: "", lastContact: "" },
+  { id: 146, name: "OLD WORLD POLISH DELI", city: "Pompano Beach", address: "4560 N Federal Hwy", phone: "954-785-0001", neighborhood: "Federal Hwy", status: "Customer", notes: "", lastContact: "" },
+  { id: 147, name: "REVELRY", city: "Pompano Beach", address: "227 S Federal Hwy", phone: "954-295-6662", neighborhood: "Old Town Pompano", status: "Customer", notes: "", lastContact: "" },
+  { id: 148, name: "SEABRA LIQUORS", city: "Pompano Beach", address: "1430 S Federal Hwy", phone: "954-942-3322", neighborhood: "Federal Hwy", status: "Customer", notes: "", lastContact: "" },
+  { id: 149, name: "VEGA FINE WINE & CIGARS", city: "Pompano Beach", address: "1000 E Atlantic Blvd", phone: "954-532-9450", neighborhood: "Atlantic Blvd", status: "Customer", notes: "", lastContact: "" },
+  { id: 150, name: "INLET HARBOUR LOUNGE & LIQUORS", city: "Riviera Beach", address: "190 E 13th St", phone: "561-842-9000", neighborhood: "Riviera Beach Marina", status: "Customer", notes: "", lastContact: "" },
+  { id: 151, name: "ROMINAS RISTORANTE ITALIANO", city: "Riviera Beach", address: "6796 N Military Trl", phone: "561-842-6600", neighborhood: "Military Trail", status: "Customer", notes: "", lastContact: "" },
+  { id: 152, name: "ISLAND TIME WINE", city: "Sanibel Island", address: "2330 Palm Ridge Rd", phone: "239-472-2194", neighborhood: "Sanibel Island", status: "Customer", notes: "", lastContact: "" },
+  { id: 153, name: "HILTON BENTLEY / SANTORINI BY GEORGIOS", city: "South Beach", address: "101 Ocean Dr", phone: "305-938-4600", neighborhood: "South Beach", status: "Customer", notes: "", lastContact: "" },
+  { id: 154, name: "GRAPE LIVING WINE AND CONSIGN", city: "Stuart", address: "301 SW St Lucie Ave", phone: "772-872-6000", neighborhood: "Downtown Stuart", status: "Customer", notes: "", lastContact: "" },
+  { id: 155, name: "IL MULINO NEW YORK (SUNNY ISLES)", city: "Sunny Isles Beach", address: "17875 Collins Ave", phone: "305-466-9191", neighborhood: "Sunny Isles Beach", status: "Customer", notes: "", lastContact: "" },
+  { id: 156, name: "LASSO GAUCHO BRAZILIAN STEAKHOUSE", city: "Sunrise", address: "1025 Shotgun Rd", phone: "954-440-2000", neighborhood: "Weston Area", status: "Customer", notes: "", lastContact: "" },
+  { id: 157, name: "PRIMO LIQUORS-SUNRISE", city: "Sunrise", address: "7800 W Oakland Park Blvd", phone: "954-748-9463", neighborhood: "Oakland Park Blvd", status: "Customer", notes: "", lastContact: "" },
+  { id: 158, name: "The Warren", city: "West Delray", address: "15084 Lyons Rd", phone: "561-455-4177", neighborhood: "West Delray", status: "Prospect", notes: "", lastContact: "" },
+  { id: 159, name: "CLUB AT IBIS THE", city: "West Palm Beach", address: "8225 Ibis Blvd", phone: "561-625-8500", neighborhood: "Ibis", status: "Customer", notes: "", lastContact: "" },
+  { id: 160, name: "DON RAMON RESTAURANT", city: "West Palm Beach", address: "7101 S Dixie Hwy", phone: "561-547-8704", neighborhood: "Dixie Hwy", status: "Customer", notes: "", lastContact: "" },
+  { id: 161, name: "OKEECHOBEE STEAK HOUSE", city: "West Palm Beach", address: "2854 Okeechobee Blvd", phone: "561-683-5151", neighborhood: "Okeechobee Blvd", status: "Customer", notes: "", lastContact: "" },
+  { id: 162, name: "RACHELS ADULT ENTERTAINMENT & STEAKHOUSE", city: "West Palm Beach", address: "2905 45th St", phone: "561-616-6100", neighborhood: "45th St", status: "Customer", notes: "", lastContact: "" },
+  { id: 163, name: "ZUCCARELLI'S WPB", city: "West Palm Beach", address: "135 S Olive Ave", phone: "561-833-6411", neighborhood: "Downtown WPB", status: "Customer", notes: "", lastContact: "" },
+  { id: 164, name: "Grato", city: "West Palm Beach", address: "1901 S Dixie Hwy", phone: "561-404-1334", neighborhood: "Dixie Corridor", status: "Prospect", notes: "", lastContact: "" },
+  { id: 165, name: "Elisabetta's Ristorante", city: "West Palm Beach", address: "185 Banyan Blvd", phone: "561-342-6699", neighborhood: "Downtown WPB", status: "Prospect", notes: "", lastContact: "" },
+  { id: 166, name: "Hullabaloo", city: "West Palm Beach", address: "517 Clematis St", phone: "561-833-1033", neighborhood: "Clematis St", status: "Prospect", notes: "", lastContact: "" },
+  { id: 167, name: "Table 26 (WPB)", city: "West Palm Beach", address: "1700 S Dixie Hwy", phone: "561-855-2660", neighborhood: "Dixie Corridor", status: "Prospect", notes: "", lastContact: "" },
+  { id: 168, name: "RH Rooftop Restaurant", city: "West Palm Beach", address: "560 Okeechobee Blvd", phone: "561-804-6826", neighborhood: "CityPlace", status: "Prospect", notes: "", lastContact: "" },
+  { id: 169, name: "Midorie", city: "West Palm Beach", address: "518 Park Pl", phone: "", neighborhood: "Flamingo Park", status: "Prospect", notes: "", lastContact: "" },
+  { id: 170, name: "Emelina", city: "West Palm Beach", address: "700 S Dixie Hwy", phone: "", neighborhood: "Flamingo Park", status: "Prospect", notes: "", lastContact: "" },
+  { id: 171, name: "Pastis", city: "West Palm Beach", address: "NORA District", phone: "", neighborhood: "NORA District", status: "Prospect", notes: "", lastContact: "" },
+  { id: 172, name: "Indaco", city: "West Palm Beach", address: "NORA District", phone: "", neighborhood: "NORA District", status: "Prospect", notes: "", lastContact: "" },
+  { id: 173, name: "Del Mar", city: "West Palm Beach", address: "1015 Railroad Ave N", phone: "561-858-2525", neighborhood: "NORA District", status: "Prospect", notes: "", lastContact: "" },
+  { id: 174, name: "Sports & Rec", city: "West Palm Beach", address: "NORA District", phone: "", neighborhood: "NORA District", status: "Prospect", notes: "", lastContact: "" },
+  { id: 175, name: "Juliana's Pizza", city: "West Palm Beach", address: "NORA District", phone: "", neighborhood: "NORA District", status: "Prospect", notes: "", lastContact: "" },
+  { id: 176, name: "H&H Bagels", city: "West Palm Beach", address: "NORA District", phone: "", neighborhood: "NORA District", status: "Prospect", notes: "", lastContact: "" },
+  { id: 177, name: "Loco Taco & Oyster Bar", city: "West Palm Beach", address: "NORA District", phone: "", neighborhood: "NORA District", status: "Prospect", notes: "", lastContact: "" },
+  { id: 178, name: "Van Leeuwen Ice Cream", city: "West Palm Beach", address: "NORA District", phone: "", neighborhood: "NORA District", status: "Prospect", notes: "", lastContact: "" },
+  { id: 179, name: "Ela Curry & Cocktails", city: "West Palm Beach", address: "700 S Rosemary Ave", phone: "", neighborhood: "CityPlace", status: "Prospect", notes: "", lastContact: "" },
+  { id: 180, name: "Mango Mercado", city: "West Palm Beach", address: "4650 Donald Ross Rd Suite 110", phone: "561-408-3014", neighborhood: "CityPlace", status: "Prospect", notes: "", lastContact: "" },
+  { id: 181, name: "Popup Bagels", city: "West Palm Beach", address: "700 S Rosemary Ave", phone: "", neighborhood: "CityPlace", status: "Prospect", notes: "", lastContact: "" },
+  { id: 182, name: "MOXIE'S", city: "West Palm Beach", address: "561 Okeechobee Blvd", phone: "", neighborhood: "CityPlace", status: "Customer", notes: "", lastContact: "" },
+];
+
+// localStorage fallback while loading
+function localLoad() {
+  try {
+    const raw = localStorage.getItem("client-mgr-v3");
+    if (raw) {
+      const saved = JSON.parse(raw);
+      return RAW_CLIENTS.map(c => ({ ...c, contacts: [], appointments: [], ...(saved[c.id] || {}) }));
+    }
+  } catch {}
+  return RAW_CLIENTS.map(c => ({ ...c, contacts: [], appointments: [] }));
+}
+
+const PALETTE = ["#c9a227","#0e7490","#be185d","#15803d","#7c3aed","#c2410c","#0369a1","#b91c1c","#4338ca","#0f766e","#b45309","#6d28d9"];
+
+function App() {
+  const [clients, setClients] = useState(localLoad);
+  const [loading, setLoading] = useState(true);
+  const [syncStatus, setSyncStatus] = useState("syncing"); // syncing | ok | error
+  const [search, setSearch] = useState("");
+  const [cityFilter, setCityFilter] = useState("All");
+  const [nbhdFilter, setNbhdFilter] = useState("All");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [expandedId, setExpandedId] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({});
+
+  const cities = useMemo(() => ["All", ...Array.from(new Set(clients.map(c => c.city))).sort()], [clients]);
+  const colorMap = useMemo(() => {
+    const m = {};
+    cities.filter(c => c !== "All").forEach((c, i) => { m[c] = PALETTE[i % PALETTE.length]; });
+    return m;
+  }, [cities]);
+  const neighborhoods = useMemo(() => {
+    const base = clients.filter(c => cityFilter === "All" || c.city === cityFilter);
+    return ["All", ...Array.from(new Set(base.map(c => c.neighborhood).filter(Boolean))).sort()];
+  }, [clients, cityFilter]);
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase();
+    return clients.filter(c => {
+      if (statusFilter !== "All" && c.status !== statusFilter) return false;
+      if (cityFilter !== "All" && c.city !== cityFilter) return false;
+      if (nbhdFilter !== "All" && c.neighborhood !== nbhdFilter) return false;
+      if (q && ![c.name, c.address, c.phone, c.neighborhood, c.notes].some(v => v?.toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }, [clients, search, cityFilter, nbhdFilter, statusFilter]);
+
+  const stats = useMemo(() => ({
+    total: clients.length,
+    customers: clients.filter(c => c.status === "Customer").length,
+    prospects: clients.filter(c => c.status === "Prospect").length,
+  }), [clients]);
+
+  // Load from Supabase on mount
+  useEffect(() => {
+    loadFromSupabase().then(rows => {
+      if (rows && rows.length > 0) {
+        setClients(rows);
+        setSyncStatus("ok");
+      } else if (rows && rows.length === 0) {
+        // First time - seed from RAW_CLIENTS
+        setSyncStatus("seeding");
+        const seed = RAW_CLIENTS.map(c => ({ ...c, contacts: [], appointments: [] }));
+        Promise.all(seed.map(c => upsertToSupabase(c))).then(() => {
+          loadFromSupabase().then(fresh => {
+            if (fresh) setClients(fresh);
+            setSyncStatus("ok");
+            setLoading(false);
+          });
+        });
+        return;
+      } else {
+        setSyncStatus("error");
+      }
+      setLoading(false);
+    });
+  }, []);
+
+  const [showAdd, setShowAdd] = useState(false);
+  const [addForm, setAddForm] = useState({ name: "", city: "", address: "", phone: "", neighborhood: "", status: "Customer", notes: "", lastContact: "" });
+  const [contactForm, setContactForm] = useState({ name: "", role: "", phone: "", email: "" });
+  const [addingContactFor, setAddingContactFor] = useState(null);
+  const [apptForm, setApptForm] = useState({ date: "", time: "", note: "" });
+  const [addingApptFor, setAddingApptFor] = useState(null);
+
+  function toggle(id) { if (editingId !== id) setExpandedId(p => p === id ? null : id); }
+  function startEdit(client, e) { e.stopPropagation(); setEditForm({ ...client }); setEditingId(client.id); setExpandedId(client.id); }
+  function saveEdit(e) {
+    e.stopPropagation();
+    const updated = clients.find(c => c.id === editingId);
+    const merged = { ...updated, ...editForm };
+    setClients(p => p.map(c => c.id === editingId ? merged : c));
+    setEditingId(null);
+    upsertToSupabase(merged);
+  }
+  function cancelEdit(e) { e.stopPropagation(); setEditingId(null); }
+
+  function openAdd() { setAddForm({ name: "", city: "", address: "", phone: "", neighborhood: "", status: "Customer", notes: "", lastContact: "" }); setShowAdd(true); }
+  function saveAdd() {
+    if (!addForm.name.trim()) return;
+    const tempId = Date.now();
+    const newClient = { ...addForm, id: tempId, contacts: [], appointments: [] };
+    setClients(p => [newClient, ...p]);
+    setShowAdd(false);
+    setExpandedId(tempId);
+    insertClientToSupabase(newClient).then(row => {
+      if (row) {
+        setClients(p => p.map(c => c.id === tempId ? { ...c, supabase_id: row.id } : c));
+      }
+    });
+  }
+
+  function addContact(clientId) {
+    if (!contactForm.name.trim()) return;
+    const newContact = { ...contactForm, id: Date.now() };
+    setClients(p => p.map(c => {
+      if (c.id !== clientId) return c;
+      const contacts = [...(c.contacts || []), newContact];
+      const updated = { ...c, contacts };
+      upsertToSupabase(updated);
+      return updated;
+    }));
+    setContactForm({ name: "", role: "", phone: "", email: "" });
+    setAddingContactFor(null);
+  }
+
+  function removeContact(clientId, contactId) {
+    setClients(p => p.map(c => {
+      if (c.id !== clientId) return c;
+      const contacts = (c.contacts || []).filter(ct => ct.id !== contactId);
+      const updated = { ...c, contacts };
+      upsertToSupabase(updated);
+      return updated;
+    }));
+  }
+
+  function addAppt(clientId) {
+    if (!apptForm.date) return;
+    const newAppt = { ...apptForm, id: Date.now() };
+    setClients(p => p.map(c => {
+      if (c.id !== clientId) return c;
+      const appointments = [...(c.appointments || []), newAppt].sort((a,b) => a.date.localeCompare(b.date));
+      const updated = { ...c, appointments };
+      upsertToSupabase(updated);
+      return updated;
+    }));
+    setApptForm({ date: "", time: "", note: "" });
+    setAddingApptFor(null);
+  }
+
+  function removeAppt(clientId, apptId) {
+    setClients(p => p.map(c => {
+      if (c.id !== clientId) return c;
+      const appointments = (c.appointments || []).filter(a => a.id !== apptId);
+      const updated = { ...c, appointments };
+      upsertToSupabase(updated);
+      return updated;
+    }));
+  }
+
+  const upcomingAppts = useMemo(() => {
+    const today = new Date(); today.setHours(0,0,0,0);
+    const cutoff = new Date(today); cutoff.setDate(today.getDate() + 7);
+    const list = [];
+    clients.forEach(c => {
+      (c.appointments || []).forEach(a => {
+        const d = new Date(a.date + "T00:00:00");
+        if (d >= today && d <= cutoff) list.push({ ...a, clientName: c.name, clientId: c.id, clientCity: c.city });
+      });
+    });
+    return list.sort((a,b) => a.date.localeCompare(b.date));
+  }, [clients]);
+
+  const G = "#c9a227", BG = "#0f0d0a", CARD = "#161310", BORDER = "#252010", MUTED = "#6b5530", TEXT = "#e8dcc8", FAINT = "#3a2e1a";
+
+  return (
+    <div style={{ background: BG, minHeight: "100vh", color: TEXT, overflowX: "hidden" }}>
+      {loading && (
+        <div style={{ position: "fixed", inset: 0, background: BG, zIndex: 999, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
+          <div style={{ fontFamily: "'Cormorant Garamond'", fontSize: 28, color: G, letterSpacing: "0.06em" }}>Account Directory</div>
+          <div style={{ fontFamily: "'Josefin Sans'", fontSize: 11, letterSpacing: "0.2em", textTransform: "uppercase", color: MUTED }}>
+            {syncStatus === "seeding" ? "Setting up your database…" : "Loading your clients…"}
+          </div>
+          <div style={{ width: 40, height: 2, background: G, borderRadius: 2, animation: "pulse 1.2s ease-in-out infinite" }} />
+          <style>{`@keyframes pulse { 0%,100%{opacity:0.3;width:40px} 50%{opacity:1;width:80px} }`}</style>
+        </div>
+      )}
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=Josefin+Sans:wght@300;400&display=swap');
+        *, *::before, *::after { box-sizing: border-box; }
+        body { margin: 0; overflow-x: hidden; }
+        .tab { background: transparent; border: 1px solid #2a1f0a; color: #7a5f28; padding: 6px 13px; border-radius: 20px; font-family: 'Josefin Sans', sans-serif; font-size: 11px; letter-spacing: 0.07em; text-transform: uppercase; cursor: pointer; white-space: nowrap; flex-shrink: 0; transition: all 0.15s; }
+        .tab.on, .tab:active { background: #8b6914; border-color: #8b6914; color: #fff; }
+        .ef { background: #1a1510; border: 1px solid #8b6914; color: #e8dcc8; padding: 8px 10px; border-radius: 5px; width: 100%; font-size: 14px; font-family: 'Josefin Sans', sans-serif; }
+        .ef:focus { outline: none; border-color: #c9a227; }
+        ::-webkit-scrollbar { height: 3px; width: 3px; }
+        ::-webkit-scrollbar-thumb { background: #8b6914; border-radius: 2px; }
+        .lbl { font-family: 'Josefin Sans', sans-serif; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: ${MUTED}; margin-bottom: 3px; }
+        .card-grid { display: grid; grid-template-columns: 1fr; }
+        @media (min-width: 700px) { .card-grid { grid-template-columns: 1fr 1fr; } }
+        @media (min-width: 1100px) { .card-grid { grid-template-columns: 1fr 1fr 1fr; } }
+      `}</style>
+
+      {/* Header */}
+      <div style={{ position: "sticky", top: 0, zIndex: 50, background: "#0a0806", borderBottom: `1px solid ${BORDER}`, padding: "12px 14px 10px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <div>
+            <div style={{ fontFamily: "'Josefin Sans'", fontSize: 9, letterSpacing: "0.2em", color: G, textTransform: "uppercase" }}>Master List</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <div style={{ fontFamily: "'Cormorant Garamond'", fontSize: 20, fontWeight: 600 }}>Account Directory</div>
+              <div title={syncStatus === "ok" ? "Synced" : syncStatus === "error" ? "Sync error" : "Syncing…"}
+                style={{ width: 7, height: 7, borderRadius: "50%", background: syncStatus === "ok" ? "#6ee7b7" : syncStatus === "error" ? "#f87171" : "#fcd34d", flexShrink: 0 }} />
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 12, fontFamily: "'Josefin Sans'", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", textAlign: "center" }}>
+              <div><div style={{ fontFamily: "'Cormorant Garamond'", fontSize: 19, color: G }}>{stats.total}</div><div style={{ color: MUTED }}>Total</div></div>
+              <div><div style={{ fontFamily: "'Cormorant Garamond'", fontSize: 19, color: "#6ee7b7" }}>{stats.customers}</div><div style={{ color: MUTED }}>Cust</div></div>
+              <div><div style={{ fontFamily: "'Cormorant Garamond'", fontSize: 19, color: "#fcd34d" }}>{stats.prospects}</div><div style={{ color: MUTED }}>Prosp</div></div>
+            </div>
+            <button onClick={openAdd} style={{ background: G, color: "#0a0806", border: "none", borderRadius: 7, padding: "8px 13px", fontFamily: "'Josefin Sans'", fontSize: 13, fontWeight: 700, cursor: "pointer", letterSpacing: "0.05em", lineHeight: 1 }}>+ Add</button>
+          </div>
+        </div>
+
+        {/* Search + status row */}
+        <div style={{ display: "flex", gap: 7, marginBottom: 9 }}>
+          <input placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)}
+            style={{ flex: 1, minWidth: 0, background: "#1a1510", border: `1px solid ${BORDER}`, color: TEXT, padding: "8px 12px", borderRadius: 7, fontSize: 15, fontFamily: "'Josefin Sans'" }} />
+          {["All", "Customer", "Prospect"].map(s => (
+            <button key={s} className={`tab${statusFilter === s ? " on" : ""}`} style={{ padding: "8px 10px", fontSize: 10 }}
+              onClick={() => setStatusFilter(s)}>{s === "All" ? "All" : s === "Customer" ? "Cust" : "Prosp"}</button>
+          ))}
+        </div>
+
+        {/* City strip */}
+        <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 6, WebkitOverflowScrolling: "touch" }}>
+          {cities.map(c => (
+            <button key={c} className={`tab${cityFilter === c ? " on" : ""}`}
+              style={cityFilter === c && c !== "All" ? { background: colorMap[c], borderColor: colorMap[c], color: "#fff" } : {}}
+              onClick={() => { setCityFilter(c); setNbhdFilter("All"); }}>{c}</button>
+          ))}
+        </div>
+
+        {/* Neighborhood strip */}
+        {neighborhoods.length > 2 && (
+          <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingTop: 7, paddingBottom: 2, WebkitOverflowScrolling: "touch" }}>
+            {neighborhoods.map(n => (
+              <button key={n} className={`tab${nbhdFilter === n ? " on" : ""}`} style={{ fontSize: 10 }}
+                onClick={() => setNbhdFilter(n)}>{n}</button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Count */}
+      <div style={{ padding: "7px 14px 3px", fontFamily: "'Josefin Sans'", fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: FAINT }}>
+        {filtered.length} account{filtered.length !== 1 ? "s" : ""}{filtered.length !== stats.total ? ` of ${stats.total}` : ""}
+      </div>
+
+      {/* Upcoming Appointments Strip */}
+      {upcomingAppts.length > 0 && (
+        <div style={{ background: "#0d0b08", borderBottom: `1px solid ${BORDER}`, padding: "10px 14px 12px" }}>
+          <div style={{ fontFamily: "'Josefin Sans'", fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", color: G, marginBottom: 8 }}>Upcoming — Next 7 Days</div>
+          {upcomingAppts.map(a => {
+            const d = new Date(a.date + "T00:00:00");
+            const today = new Date(); today.setHours(0,0,0,0);
+            const tomorrow = new Date(today); tomorrow.setDate(today.getDate()+1);
+            const isToday = d.getTime() === today.getTime();
+            const isTomorrow = d.getTime() === tomorrow.getTime();
+            const label = isToday ? "TODAY" : isTomorrow ? "TOMORROW" : d.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}).toUpperCase();
+            return (
+              <div key={a.id} onClick={() => { setExpandedId(a.clientId); setCityFilter("All"); setNbhdFilter("All"); setSearch(""); }}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: `1px solid ${FAINT}`, cursor: "pointer" }}>
+                <div style={{ minWidth: 72, fontFamily: "'Josefin Sans'", fontSize: 10, letterSpacing: "0.08em", color: isToday ? "#fcd34d" : isTomorrow ? "#6ee7b7" : "#9a8060", fontWeight: isToday ? 700 : 400 }}>{label}</div>
+                {a.time && <div style={{ fontFamily: "'Josefin Sans'", fontSize: 11, color: MUTED, minWidth: 40 }}>{a.time}</div>}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: "'Cormorant Garamond'", fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.clientName}</div>
+                  {a.note && <div style={{ fontFamily: "'Josefin Sans'", fontSize: 11, color: MUTED, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontStyle: "italic" }}>{a.note}</div>}
+                </div>
+                <div style={{ fontFamily: "'Josefin Sans'", fontSize: 10, color: FAINT }}>›</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Upcoming Appointments Strip */}
+      {upcomingAppts.length > 0 && (
+        <div style={{ background: "#0d0b08", borderBottom: `1px solid ${BORDER}`, padding: "10px 14px 12px" }}>
+          <div style={{ fontFamily: "'Josefin Sans'", fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", color: G, marginBottom: 8 }}>Upcoming — Next 7 Days</div>
+          {upcomingAppts.map(a => {
+            const d = new Date(a.date + "T00:00:00");
+            const today = new Date(); today.setHours(0,0,0,0);
+            const tomorrow = new Date(today); tomorrow.setDate(today.getDate()+1);
+            const isToday = d.getTime() === today.getTime();
+            const isTomorrow = d.getTime() === tomorrow.getTime();
+            const label = isToday ? "TODAY" : isTomorrow ? "TOMORROW" : d.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}).toUpperCase();
+            return (
+              <div key={a.id} onClick={() => { setExpandedId(a.clientId); setCityFilter("All"); setNbhdFilter("All"); setSearch(""); }}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid #2a1f0a", cursor: "pointer" }}>
+                <div style={{ minWidth: 76, fontFamily: "'Josefin Sans'", fontSize: 10, letterSpacing: "0.07em", color: isToday ? "#fcd34d" : isTomorrow ? "#6ee7b7" : "#9a8060", fontWeight: isToday ? 700 : 400 }}>{label}</div>
+                {a.time && <div style={{ fontFamily: "'Josefin Sans'", fontSize: 11, color: MUTED, minWidth: 38 }}>{a.time}</div>}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: "'Cormorant Garamond'", fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.clientName}</div>
+                  {a.note && <div style={{ fontFamily: "'Josefin Sans'", fontSize: 11, color: MUTED, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontStyle: "italic" }}>{a.note}</div>}
+                </div>
+                <div style={{ fontFamily: "'Josefin Sans'", fontSize: 13, color: MUTED }}>›</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Cards */}
+      <div className="card-grid">
+      {filtered.map(client => {
+        const open = expandedId === client.id;
+        const editing = editingId === client.id;
+        const cc = colorMap[client.city] || G;
+        const isCust = client.status === "Customer";
+
+        return (
+          <div key={client.id} style={{ background: CARD, borderBottom: `1px solid ${BORDER}`, cursor: "pointer" }}
+            onClick={() => toggle(client.id)}>
+
+            {/* Summary row */}
+            <div style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ width: 3, height: 40, borderRadius: 2, background: cc, flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: "'Cormorant Garamond'", fontSize: 15, fontWeight: 600, lineHeight: 1.25, marginBottom: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {client.name}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
+                  <span style={{ fontFamily: "'Josefin Sans'", fontSize: 10, color: cc, letterSpacing: "0.06em", textTransform: "uppercase" }}>{client.city}</span>
+                  {client.neighborhood && (
+                    <span style={{ background: "#1a1510", border: `1px solid ${BORDER}`, borderRadius: 20, padding: "1px 8px", fontFamily: "'Josefin Sans'", fontSize: 10, color: "#9a7a3a", letterSpacing: "0.04em" }}>
+                      {client.neighborhood}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5, flexShrink: 0 }}>
+                <span style={{
+                  background: isCust ? "#d1fae5" : "#fef3c7",
+                  color: isCust ? "#065f46" : "#92400e",
+                  border: `1px solid ${isCust ? "#6ee7b7" : "#fcd34d"}`,
+                  borderRadius: 20, padding: "2px 9px",
+                  fontFamily: "'Josefin Sans'", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase"
+                }}>{client.status}</span>
+                <span style={{ fontSize: 14, color: open ? G : MUTED, display: "inline-block", transform: open ? "rotate(180deg)" : "none", transition: "transform 0.2s", lineHeight: 1 }}>⌄</span>
+              </div>
+            </div>
+
+            {/* Expanded */}
+            {open && (
+              <div style={{ borderTop: `1px solid ${FAINT}`, padding: "10px 14px 14px" }} onClick={e => e.stopPropagation()}>
+                {!editing ? (
+                  <>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 14px", marginBottom: 12 }}>
+                      <div>
+                        <div className="lbl">Phone</div>
+                        {client.phone
+                          ? <a href={`tel:${client.phone}`} style={{ color: G, fontFamily: "'Josefin Sans'", fontSize: 14, textDecoration: "none" }}>{client.phone}</a>
+                          : <span style={{ color: FAINT, fontFamily: "'Josefin Sans'", fontSize: 13 }}>—</span>}
+                      </div>
+                      <div>
+                        <div className="lbl">Last Contact</div>
+                        <div style={{ fontFamily: "'Josefin Sans'", fontSize: 13, color: client.lastContact ? "#9a8060" : FAINT, fontStyle: client.lastContact ? "normal" : "italic" }}>
+                          {client.lastContact ? new Date(client.lastContact).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "Not set"}
+                        </div>
+                      </div>
+                      <div style={{ gridColumn: "span 2" }}>
+                        <div className="lbl">Address</div>
+                        <div style={{ fontFamily: "'Josefin Sans'", fontSize: 13, color: "#9a8060" }}>{client.address || "—"}</div>
+                      </div>
+                      <div style={{ gridColumn: "span 2" }}>
+                        <div className="lbl">Contact Person</div>
+                        <div style={{ fontFamily: "'Josefin Sans'", fontSize: 13, color: client.contact ? "#e8dcc8" : FAINT, fontStyle: client.contact ? "normal" : "italic" }}>
+                          {client.contact || "Not set"}
+                        </div>
+                      </div>
+                      <div style={{ gridColumn: "span 2" }}>
+                        <div className="lbl">Notes</div>
+                        <div style={{ fontFamily: "'Josefin Sans'", fontSize: 13, color: client.notes ? "#9a8060" : FAINT, fontStyle: "italic" }}>
+                          {client.notes || "None"}
+                        </div>
+                      </div>
+                    </div>
+                    {/* Appointments section */}
+                    <div style={{ borderTop: "1px solid #2a2010", margin: "12px 0 10px", paddingTop: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                        <div className="lbl" style={{ margin: 0 }}>Appointments</div>
+                        <button onClick={e => { e.stopPropagation(); setAddingApptFor(addingApptFor === client.id ? null : client.id); setApptForm({ date: "", time: "", note: "" }); }}
+                          style={{ background: "transparent", border: "1px solid #8b6914", color: "#c9a227", padding: "3px 10px", borderRadius: 20, fontFamily: "'Josefin Sans'", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", cursor: "pointer" }}>
+                          {addingApptFor === client.id ? "Cancel" : "+ Add"}
+                        </button>
+                      </div>
+
+                      {(client.appointments || []).length === 0 && addingApptFor !== client.id && (
+                        <div style={{ fontFamily: "'Josefin Sans'", fontSize: 12, color: "#3a2e1a", fontStyle: "italic" }}>No appointments scheduled</div>
+                      )}
+
+                      {(client.appointments || []).map(a => {
+                        const d = new Date(a.date + "T00:00:00");
+                        const today = new Date(); today.setHours(0,0,0,0);
+                        const isPast = d < today;
+                        return (
+                          <div key={a.id} style={{ background: "#1a1510", borderRadius: 6, padding: "8px 10px", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "flex-start", opacity: isPast ? 0.5 : 1 }}>
+                            <div>
+                              <div style={{ fontFamily: "'Josefin Sans'", fontSize: 11, color: isPast ? MUTED : "#fcd34d", letterSpacing: "0.07em", textTransform: "uppercase" }}>
+                                {d.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}{a.time ? " · " + a.time : ""}
+                              </div>
+                              {a.note && <div style={{ fontFamily: "'Josefin Sans'", fontSize: 12, color: "#9a8060", marginTop: 2, fontStyle: "italic" }}>{a.note}</div>}
+                            </div>
+                            <button onClick={e => { e.stopPropagation(); removeAppt(client.id, a.id); }}
+                              style={{ background: "transparent", border: "none", color: "#3a2e1a", fontSize: 16, cursor: "pointer", paddingLeft: 8, lineHeight: 1 }}>&#x2715;</button>
+                          </div>
+                        );
+                      })}
+
+                      {addingApptFor === client.id && (
+                        <div style={{ background: "#1a1510", borderRadius: 6, padding: "10px", marginTop: 4 }} onClick={e => e.stopPropagation()}>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                            <div>
+                              <div className="lbl">Date *</div>
+                              <input type="date" className="ef" value={apptForm.date} onChange={e => setApptForm(f => ({ ...f, date: e.target.value }))} />
+                            </div>
+                            <div>
+                              <div className="lbl">Time</div>
+                              <input type="time" className="ef" value={apptForm.time} onChange={e => setApptForm(f => ({ ...f, time: e.target.value }))} />
+                            </div>
+                            <div style={{ gridColumn: "span 2" }}>
+                              <div className="lbl">Note</div>
+                              <input className="ef" value={apptForm.note} onChange={e => setApptForm(f => ({ ...f, note: e.target.value }))} placeholder="Wine tasting, follow up..." />
+                            </div>
+                          </div>
+                          <button onClick={e => { e.stopPropagation(); addAppt(client.id); }} disabled={!apptForm.date}
+                            style={{ background: apptForm.date ? "#8b6914" : "#2a1f0a", color: "#fff", border: "none", padding: "7px 16px", borderRadius: 5, fontFamily: "'Josefin Sans'", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", cursor: apptForm.date ? "pointer" : "default" }}>
+                            Save
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Contacts section */}
+                    <div style={{ borderTop: "1px solid #2a2010", margin: "12px 0 10px", paddingTop: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                        <div className="lbl" style={{ margin: 0 }}>Contacts</div>
+                        <button onClick={e => { e.stopPropagation(); setAddingContactFor(addingContactFor === client.id ? null : client.id); setContactForm({ name: "", role: "", phone: "", email: "" }); }}
+                          style={{ background: "transparent", border: "1px solid #8b6914", color: "#c9a227", padding: "3px 10px", borderRadius: 20, fontFamily: "'Josefin Sans'", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", cursor: "pointer" }}>
+                          {addingContactFor === client.id ? "Cancel" : "+ Add"}
+                        </button>
+                      </div>
+
+                      {(client.contacts || []).length === 0 && addingContactFor !== client.id && (
+                        <div style={{ fontFamily: "'Josefin Sans'", fontSize: 12, color: "#3a2e1a", fontStyle: "italic" }}>No contacts yet</div>
+                      )}
+
+                      {(client.contacts || []).map(ct => (
+                        <div key={ct.id} style={{ background: "#1a1510", borderRadius: 6, padding: "8px 10px", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                          <div>
+                            <div style={{ fontFamily: "'Cormorant Garamond'", fontSize: 14, fontWeight: 600, color: "#e8dcc8" }}>{ct.name}</div>
+                            {ct.role && <div style={{ fontFamily: "'Josefin Sans'", fontSize: 10, color: "#c9a227", letterSpacing: "0.08em", textTransform: "uppercase", marginTop: 1 }}>{ct.role}</div>}
+                            <div style={{ display: "flex", gap: 10, marginTop: 3, flexWrap: "wrap" }}>
+                              {ct.phone && <a href={"tel:"+ct.phone} style={{ fontFamily: "'Josefin Sans'", fontSize: 12, color: "#9a8060", textDecoration: "none" }}>{ct.phone}</a>}
+                              {ct.email && <a href={"mailto:"+ct.email} style={{ fontFamily: "'Josefin Sans'", fontSize: 12, color: "#9a8060", textDecoration: "none" }}>{ct.email}</a>}
+                            </div>
+                          </div>
+                          <button onClick={e => { e.stopPropagation(); removeContact(client.id, ct.id); }}
+                            style={{ background: "transparent", border: "none", color: "#3a2e1a", fontSize: 16, cursor: "pointer", paddingLeft: 8, lineHeight: 1 }}>&#x2715;</button>
+                        </div>
+                      ))}
+
+                      {addingContactFor === client.id && (
+                        <div style={{ background: "#1a1510", borderRadius: 6, padding: "10px", marginTop: 4 }} onClick={e => e.stopPropagation()}>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                            <div style={{ gridColumn: "span 2" }}>
+                              <div className="lbl">Name *</div>
+                              <input className="ef" value={contactForm.name} onChange={e => setContactForm(f => ({ ...f, name: e.target.value }))} placeholder="Full name" />
+                            </div>
+                            <div>
+                              <div className="lbl">Role</div>
+                              <input className="ef" value={contactForm.role} onChange={e => setContactForm(f => ({ ...f, role: e.target.value }))} placeholder="Owner, Manager…" />
+                            </div>
+                            <div>
+                              <div className="lbl">Phone</div>
+                              <input className="ef" value={contactForm.phone} onChange={e => setContactForm(f => ({ ...f, phone: e.target.value }))} />
+                            </div>
+                            <div style={{ gridColumn: "span 2" }}>
+                              <div className="lbl">Email</div>
+                              <input className="ef" value={contactForm.email} onChange={e => setContactForm(f => ({ ...f, email: e.target.value }))} />
+                            </div>
+                          </div>
+                          <button onClick={e => { e.stopPropagation(); addContact(client.id); }} disabled={!contactForm.name.trim()}
+                            style={{ background: contactForm.name.trim() ? "#8b6914" : "#2a1f0a", color: "#fff", border: "none", padding: "7px 16px", borderRadius: 5, fontFamily: "'Josefin Sans'", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", cursor: contactForm.name.trim() ? "pointer" : "default" }}>
+                            Save Contact
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <button onClick={e => startEdit(client, e)}
+                      style={{ background: "#8b6914", color: "#fff", border: "none", padding: "8px 18px", borderRadius: 5, fontFamily: "'Josefin Sans'", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", cursor: "pointer" }}>
+                      ✎ Edit
+                    </button>
+                  </>
+                ) : (
+                  <div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9, marginBottom: 10 }}>
+                      {[["name", "Name", "span 2"], ["contact", "Contact Person", "span 2"], ["phone", "Phone", ""], ["city", "City", ""], ["address", "Address", "span 2"], ["neighborhood", "Neighborhood", ""], ["lastContact", "Last Contact", "date"]].map(([k, label, span]) => (
+                        <div key={k} style={span === "span 2" ? { gridColumn: "span 2" } : {}}>
+                          <div className="lbl">{label}</div>
+                          <input type={span === "date" ? "date" : "text"} className="ef" value={editForm[k] || ""}
+                            onChange={e => setEditForm(f => ({ ...f, [k]: e.target.value }))} />
+                        </div>
+                      ))}
+                      <div>
+                        <div className="lbl">Status</div>
+                        <select className="ef" value={editForm.status || "Customer"} onChange={e => setEditForm(f => ({ ...f, status: e.target.value }))}>
+                          <option>Customer</option><option>Prospect</option>
+                        </select>
+                      </div>
+                      <div style={{ gridColumn: "span 2" }}>
+                        <div className="lbl">Notes</div>
+                        <textarea className="ef" rows={2} value={editForm.notes || ""} onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} placeholder="Add notes…" style={{ resize: "vertical" }} />
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 9 }}>
+                      <button className="ef" style={{ background: "#8b6914", color: "#fff", border: "none", padding: "9px 20px", borderRadius: 5, cursor: "pointer", fontFamily: "'Josefin Sans'", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", width: "auto" }}
+                        onClick={saveEdit}>Save</button>
+                      <button className="ef" style={{ background: "transparent", color: MUTED, padding: "9px 16px", borderRadius: 5, cursor: "pointer", fontFamily: "'Josefin Sans'", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", width: "auto" }}
+                        onClick={cancelEdit}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      </div>
+      {filtered.length === 0 && (
+        <div style={{ padding: 60, textAlign: "center", fontFamily: "'Josefin Sans'", fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", color: FAINT }}>No accounts found</div>
+      )}
+      <div style={{ height: 40 }} />
+
+      {showAdd && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 200, display: "flex", alignItems: "flex-end", background: "rgba(0,0,0,0.75)" }}
+          onClick={() => setShowAdd(false)}>
+          <div style={{ background: "#161310", width: "100%", maxWidth: 700, margin: "0 auto", borderRadius: "16px 16px 0 0", padding: "20px 16px 36px", maxHeight: "90vh", overflowY: "auto" }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div style={{ fontFamily: "'Cormorant Garamond'", fontSize: 20, fontWeight: 600 }}>New Account</div>
+              <button onClick={() => setShowAdd(false)} style={{ background: "transparent", border: "none", color: MUTED, fontSize: 22, cursor: "pointer" }}>&#x2715;</button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+              <div style={{ gridColumn: "span 2" }}>
+                <div className="lbl">Name <span style={{ color: G }}>*</span></div>
+                <input className="ef" value={addForm.name} onChange={e => setAddForm(f => ({ ...f, name: e.target.value }))} placeholder="Restaurant / business name" />
+              </div>
+              <div style={{ gridColumn: "span 2" }}>
+                <div className="lbl">Contact Person</div>
+                <input className="ef" value={addForm.contact||""} onChange={e => setAddForm(f => ({ ...f, contact: e.target.value }))} placeholder="Owner / Manager name" />
+              </div>
+              <div>
+                <div className="lbl">Phone</div>
+                <input className="ef" value={addForm.phone} onChange={e => setAddForm(f => ({ ...f, phone: e.target.value }))} />
+              </div>
+              <div>
+                <div className="lbl">City</div>
+                <input className="ef" value={addForm.city} onChange={e => setAddForm(f => ({ ...f, city: e.target.value }))} />
+              </div>
+              <div style={{ gridColumn: "span 2" }}>
+                <div className="lbl">Address</div>
+                <input className="ef" value={addForm.address} onChange={e => setAddForm(f => ({ ...f, address: e.target.value }))} />
+              </div>
+              <div>
+                <div className="lbl">Neighborhood</div>
+                <input className="ef" value={addForm.neighborhood} onChange={e => setAddForm(f => ({ ...f, neighborhood: e.target.value }))} />
+              </div>
+              <div>
+                <div className="lbl">Status</div>
+                <select className="ef" value={addForm.status} onChange={e => setAddForm(f => ({ ...f, status: e.target.value }))}>
+                  <option>Customer</option><option>Prospect</option>
+                </select>
+              </div>
+              <div>
+                <div className="lbl">Last Contact</div>
+                <input type="date" className="ef" value={addForm.lastContact} onChange={e => setAddForm(f => ({ ...f, lastContact: e.target.value }))} />
+              </div>
+              <div style={{ gridColumn: "span 2" }}>
+                <div className="lbl">Notes</div>
+                <textarea className="ef" rows={2} value={addForm.notes} onChange={e => setAddForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional..." style={{ resize: "vertical" }} />
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 9 }}>
+              <button onClick={saveAdd} disabled={!addForm.name.trim()}
+                style={{ background: addForm.name.trim() ? G : FAINT, color: "#0a0806", border: "none", padding: "10px 22px", borderRadius: 6, fontFamily: "'Josefin Sans'", fontSize: 12, letterSpacing: "0.1em", textTransform: "uppercase", cursor: addForm.name.trim() ? "pointer" : "default", fontWeight: 700 }}>
+                Save Account
+              </button>
+              <button onClick={() => setShowAdd(false)}
+                style={{ background: "transparent", color: MUTED, border: "1px solid #3a2e1a", padding: "10px 18px", borderRadius: 6, fontFamily: "'Josefin Sans'", fontSize: 12, letterSpacing: "0.1em", textTransform: "uppercase", cursor: "pointer" }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+  const root = ReactDOM.createRoot(document.getElementById('root'));
+  root.render(<App />);
+  </script>
+</body>
+</html>
